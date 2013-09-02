@@ -30,7 +30,7 @@ string obtainName(const string & column_name) {
     if (regex_match(column_name, regex("TR:.*:Inhibitors")))
         return column_name.substr(3, column_name.size() - 3 - strlen("Inhibitors") - 1);
     if (regex_match(column_name, regex("TR:.*:Stimuli")))
-        return column_name.substr(3, column_name.size() - 3 - strlen("Activators") - 1);
+        return column_name.substr(3, column_name.size() - 3 - strlen("Stimuli") - 1);
     if (regex_match(column_name, regex("TR:.*(i|a)")))
         return column_name.substr(3, column_name.size() - 4);
     return "";
@@ -238,56 +238,25 @@ TEST(FunctionTest, logistic) {
     cout << logistic(0.1,0.9) << " " << logistic(0.5,0.5) << "\n";
 }
 
-vector<ComponentData> computeInhibitors(const vector<ComponentData> & components, vector<Interval> & intervals) {
+vector<ComponentData> computeRegulators(const vector<ComponentData> & components, vector<Interval> & intervals, bool inhibition) {
     vector<ComponentData> regulated = components;
-    const size_t total = pow(components.size(), 3) * count_if(components.begin(), components.end(), [](const ComponentData & comp){return comp.measured;});
-    size_t current = 0;
+    const size_t total = pow(components.size(), 3) * count_if(components.begin(), components.end(), [](const ComponentData & comp){return comp.measured;}) * 2;
+    size_t current = inhibition ? 0 : total / 2;
 
     for (const size_t target_no : scope(components)) {
         map<double, set<string> > mutual_inf;
         if (!components[target_no].measured)
             continue;
 
-        // Test all combinations up to three inhibitors (combination of multiple selfs == just single one).
+        // Test all combinations up to three regulators (combination of multiple selfs == just single one).
         for (const size_t source_1_no : scope(components)) {
             for (const size_t source_2_no : scope(components)) {
                 for (const size_t source_3_no : scope(components)) {
-                    cout << "Testing inhibitions: " << current++ << "/" << total << "\r";
+                     cout << "Testing: " << current++ << "/" << total << "     \r";
                     double effect = 0.;
                     for (const Interval & interval : intervals) {
-                        effect += -1 * interval.changes[target_no] * logistic(interval.first_[source_1_no],interval.first_[source_2_no],interval.first_[source_3_no]);
-                    }
-                    mutual_inf.insert(make_pair(effect, set<string>({components[source_1_no].name, components[source_2_no].name, components[source_3_no].name})));
-                }
-            }
-        }
-
-        auto max_it = max_element(mutual_inf.begin(), mutual_inf.end());
-        // Pick the one with the biggest positive influence - if there is none, just take empty.
-        regulated[target_no].inhibitors = (max_it->first - 0.05* max_it->second.size() ) > 0 ? max_it->second : set<string>();
-    }
-
-    return regulated;
-}
-
-vector<ComponentData> computeActivators(const vector<ComponentData> & components, vector<Interval> & intervals) {
-    vector<ComponentData> regulated = components;
-    const size_t total = pow(components.size(), 3) * count_if(components.begin(), components.end(), [](const ComponentData & comp){return comp.measured;});
-    size_t current = 0;
-
-    for (const size_t target_no : scope(components)) {
-        map<double, set<string> > mutual_inf;
-        if (!components[target_no].measured)
-            continue;
-
-        // Test all combinations up to three inhibitors (combination of multiple selfs == just single one).
-        for (const size_t source_1_no : scope(components)) {
-            for (const size_t source_2_no : scope(components)) {
-                for (const size_t source_3_no : scope(components)) {
-                     cout << "Testing activators: " << current++ << "/" << total << "\r";
-                    double effect = 0.;
-                    for (const Interval & interval : intervals) {
-                        effect += interval.productions[target_no] * (interval.first_[source_1_no],interval.first_[source_2_no],interval.first_[source_3_no]);
+                        double factor = inhibition ? -1 * interval.changes[target_no] : interval.productions[target_no];
+                        effect += factor * (interval.first_[source_1_no],interval.first_[source_2_no],interval.first_[source_3_no]);
                     }
                     mutual_inf.insert(make_pair(effect, set<string>({components[source_1_no].name, components[source_2_no].name, components[source_3_no].name})));
                 }
@@ -301,6 +270,19 @@ vector<ComponentData> computeActivators(const vector<ComponentData> & components
 
     return regulated;
 }
+
+string getModelName(const string & argument) {
+    string name;
+    for (const char ch : argument) {
+        if (ch == '.')
+            break;
+        name.push_back(ch);
+        if (ch == '/' || ch == '\\')
+            name.clear();
+    }
+    return name;
+}
+
 
 void output(const vector<ComponentData> & components, const string & file_name) {
     ofstream fout(file_name + ".sif", ios::out);
@@ -321,9 +303,10 @@ int main(int argc, char* argv[]) {
         return RUN_ALL_TESTS();
     }
 
-    fstream input_file(argv[1], ios::in);
+    string filename(argv[1]);
+    fstream input_file(filename, ios::in);
     if (!input_file)
-        throw invalid_argument("Wrong filename \"" + string(argv[1]) + "\".\n");
+        throw invalid_argument("Wrong filename \"" + filename + "\".\n");
 
     string names_line;
     getline(input_file, names_line);
@@ -336,19 +319,10 @@ int main(int argc, char* argv[]) {
     vector<vector<vector<double> > > timepoints = getTimepoints(components, DA_colum, input_file);
     timepoints = normalize(timepoints);
     vector<Interval> intervals = makeIntervals(timepoints);
-    components = computeInhibitors(components, intervals);
-    components = computeActivators(components, intervals);
+    components = computeRegulators(components, intervals, true);
+    components = computeRegulators(components, intervals, false);
 
-    string name;
-    for (const char ch : string(argv[1])) {
-        if (ch == '.')
-            break;
-        if (ch == '/' || ch == '\\')
-            name.clear();
-        name.push_back(ch);
-    }
-
-    output(components, name);
+    output(components, getModelName(filename));
 
     return 0;
 }
