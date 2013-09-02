@@ -3,6 +3,7 @@
 #include <stdexcept>
 #include <regex>
 #include <map>
+#include <cmath>
 
 #include <gtest/gtest.h>
 
@@ -67,7 +68,9 @@ TEST(FunctionTest, NameForming) {
 struct ComponentData {
     size_t column_no;
     string name;
-    bool measured; ///< True iff the component is not either stimulated or inhibited
+    bool measured; ///< True iff the component is not either stimulated or inhibited.
+    set<string> inhibitors; ///< Names of the species that inhibit this node.
+    set<string> activators; ///< Names of the species that activate this node.
 };
 
 vector<ComponentData> getComponenets(const vector<string> & column_names) {
@@ -75,7 +78,7 @@ vector<ComponentData> getComponenets(const vector<string> & column_names) {
     size_t column_no = 0;
     for (const string & column : column_names) {
         if (isComponent(column)) {
-            components.push_back({column_no, obtainName(column), isMeasured(column)});
+            components.push_back({column_no, obtainName(column), isMeasured(column), set<string>(), set<string>()});
         }
         column_no++;
     }
@@ -160,14 +163,34 @@ TEST_F(DataTest, Normalize) {
 struct Interval {
     const vector<double> & first_;
     const vector<double> & second_;
-    vector<double> change;
+    vector<double> changes;
+    vector<double> productions;
 
     NO_COPY_SHORT(Interval)
     DEFAULT_MOVE(Interval)
 
     Interval(const vector<double> & first, const vector<double> & second) : first_(first), second_(second) {
-        for (const size_t val_no : scope(first))
-            change.push_back(second[val_no] - first[val_no]);
+        double avg_production = 0;
+        size_t production_cases = 0;
+
+        // Compute change
+        for (const size_t val_no : scope(first)) {
+            const double change = second[val_no] - first[val_no];
+            changes.push_back(change);
+            if (step > 0.) {
+                avg_production += change;
+                production_cases++;
+            }
+        }
+        avg_production /= avg_production;
+
+        // Compute production factor - positive if bigger than average, negative otherwise
+        for (const double change : changes) {
+            if (change <= 0.)
+                productions.push_back(0.);
+            else
+                productions.push_back(change - avg_production);
+        }
     }
 };
 
@@ -191,6 +214,74 @@ TEST_F(DataTest, MakeIntervals) {
     EXPECT_DOUBLE_EQ(-0.25, intervals[1].change[1]);
 }
 
+double inline logistic(const double x) {
+    return 1 / (1 + exp(-x));
+}
+
+double inline logistic(const double x, const double y) {
+    return logistic(x) + logistic(y) - logistic(x)*logistic(y);
+}
+
+double inline logistic(const double x, const double y, const double z) {
+    return logistic(x) + logistic(y) + logistic(z)
+           - logistic(x)*logistic(y) - logistic(x)*logistic(z) - logistic(y)*logistic(z)
+           + logistic(x)*logistic(y)*logistic(z);
+}
+
+
+vector<ComponentData> computeRegulators(const vector<ComponentData> & components, vector<Interval> & intervals) {
+    vector<ComponentData> regulated = components;
+
+    for (const size_t target_no : scope(components)) {
+        map<double, set<string> > mutual_inf;
+        if (!components[target_no].measured)
+            continue;
+
+        // Test single inhibitors.
+        for (const size_t source_no : scope(components)) {
+            double effect = 0.;
+            for (const Interval & interval : intervals) {
+                effect += -1 * interval.changes[target_no] * logistic(interval.first_[source_no]);
+            }
+            effect /= intervals.size();
+            mutual_inf.insert(make_pair(effect, set<string>({components[source_no].name})));
+        }
+
+        // Test two inhibitors.
+        for (const size_t source_1_no : scope(components)) {
+            for (const size_t source_2_no : range(source_1_no + 1, components.size())) {
+                double effect = 0.;
+                for (const Interval & interval : intervals) {
+                    effect += -1 * interval.changes[target_no] * logistic(interval.first_[source_1_no],interval.first_[source_2_no]);
+                }
+                effect /= intervals.size();
+                mutual_inf.insert(make_pair(effect, set<string>({components[source_1_no].name, components[source_2_no].name})));
+            }
+        }
+
+        // Test three inhibitors.
+        for (const size_t source_1_no : scope(components)) {
+            for (const size_t source_2_no : range(source_1_no + 1, components.size())) {
+                for (const size_t source_3_no : range(source_1_no + 1, components.size())) {
+                    double effect = 0.;
+                    for (const Interval & interval : intervals) {
+                        effect += -1 * interval.changes[target_no] * logistic(interval.first_[source_1_no],interval.first_[source_2_no],interval.first_[source_3_no]);
+                    }
+                    effect /= intervals.size();
+                    mutual_inf.insert(make_pair(effect, set<string>({components[source_1_no].name, components[source_2_no].name, components[source_3_no].name})));
+                }
+            }
+        }
+
+
+        auto max_it = max_element(mutual_inf.begin(), mutual_inf.end());
+        // Pick the one with the biggest positive influence - if there is none, just take empty.
+        regulated[target_no].inhibitors = max_it->first > 0 ? max_it->second : set<string>();
+    }
+
+    return regulated;
+}
+
 int main(int argc, char* argv[]) {
     // if (argc < 2) {
         ::testing::InitGoogleTest( &argc, argv );
@@ -212,6 +303,7 @@ int main(int argc, char* argv[]) {
     vector<vector<vector<double> > > timepoints = getTimepoints(components, DA_colum, input_file);
     timepoints = normalize(timepoints);
     vector<Interval> intervals = makeIntervals(timepoints);
+    components = computeRegulators(components, intervals);
 
     return 0;
 }
