@@ -23,11 +23,6 @@ size_t findDAColumn(const vector<string> & column_names) {
     throw runtime_error("DA_column not found.\n");
 }
 
-bool isComponent(const string & column_name) {
-    const regex component_expr("((DV:.*)|(TR:.*(i|a))|(TR:.*:(Inhibitors|Activators)))");
-    return regex_match(column_name, component_expr);
-}
-
 string obtainName(const string & column_name) {
     if (regex_match(column_name, regex("DV:.*")))
         return column_name.substr(3, column_name.size() - 3);
@@ -40,7 +35,28 @@ string obtainName(const string & column_name) {
     return "";
 }
 
+bool isComponent(const string & column_name) {
+    return !obtainName(column_name).empty();
+}
+
+bool isMeasured(const string & column_name) {
+    const regex component_expr("DV:.*");
+    return regex_match(column_name, component_expr);
+}
+
 TEST(FunctionTest, NameForming) {
+    EXPECT_TRUE(isComponent("DV:Test"));
+    EXPECT_TRUE(isComponent("TR:Testa"));
+    EXPECT_TRUE(isComponent("TR:Testi"));
+    EXPECT_TRUE(isComponent("TR:Test:Inhibitors"));
+    EXPECT_TRUE(isComponent("TR:Test:Activators"));
+    EXPECT_FALSE(isComponent("VD:Test"));
+    EXPECT_FALSE(isComponent("TR:TestA"));
+
+    EXPECT_TRUE(isMeasured("DV:Test"));
+    EXPECT_FALSE(isMeasured("VD:Test"));
+    EXPECT_FALSE(isMeasured("TR:Testi"));
+
     EXPECT_STREQ("Test", obtainName("DV:Test").c_str());
     EXPECT_STREQ("Test", obtainName("TR:Testa").c_str());
     EXPECT_STREQ("Test", obtainName("TR:Testi").c_str());
@@ -48,31 +64,25 @@ TEST(FunctionTest, NameForming) {
     EXPECT_STREQ("Test", obtainName("TR:Test:Activators").c_str());
 }
 
-class Interval {
-    const vector<double> & first_;
-    const vector<double> & second_;
-    const vector<double> change;
-
-public:
-    NO_COPY_SHORT(Interval)
-    Interval(const vector<double> & first, const vector<double> & second) : first_(first), second_(second) {
-
-    }
+struct ComponentData {
+    size_t column_no;
+    string name;
+    bool measured; ///< True iff the component is not either stimulated or inhibited
 };
 
-map<size_t, string>  getComponenets(const vector<string> & column_names) {
-    map<size_t, string> components;
+vector<ComponentData> getComponenets(const vector<string> & column_names) {
+    vector<ComponentData>  components;
     size_t column_no = 0;
     for (const string & column : column_names) {
         if (isComponent(column)) {
-            components.insert(make_pair(column_no, obtainName(column)));
+            components.push_back({column_no, obtainName(column), isMeasured(column)});
         }
         column_no++;
     }
     return components;
 }
 
-vector<vector<vector<double> > > getTimepoints(const map<size_t, string> & components, const size_t DA_colum, fstream & input_file) {
+vector<vector<vector<double> > > getTimepoints(const vector<ComponentData> & components, const size_t DA_colum, fstream & input_file) {
     vector<vector<vector<double> > > timepoints; // Measurements are grouped by a timepoint, not by the experiment!
     timepoints.push_back(vector<vector<double> >());
     string measurement_time = "0";
@@ -87,8 +97,8 @@ vector<vector<vector<double> > > getTimepoints(const map<size_t, string> & compo
             timepoints.push_back(vector<vector<double> >());
         }
         vector<double> values;
-        for (const pair<size_t, string> & component : components) {
-            values.push_back(boost::lexical_cast<double>(data[component.first]));
+        for (const ComponentData & component : components) {
+            values.push_back(boost::lexical_cast<double>(data[component.column_no]));
         }
         timepoints[time_point].push_back(values);
     }
@@ -126,15 +136,59 @@ vector<vector<vector<double> > > normalize(const vector<vector<vector<double> > 
     return normalized;
 }
 
-TEST(FunctionTest, Normalize) {
-    vector<vector<vector<double> > > values = {{{0,0.4},{1,0.6}},{{0.5,0.8}}};
-    values = normalize(values);
+class DataTest : public ::testing::Test {
+protected:
+    vector<vector<vector<double> > > data1;
+
+    void SetUp() override {
+        data1 = {{{0,0.4},{1,0.6}},{{0.5,0.8}, {0.25,0.5}}};
+    }
+};
+
+TEST_F(DataTest, Normalize) {
+    vector<vector<vector<double> > > values = normalize(data1);
     EXPECT_DOUBLE_EQ(0., values[0][0][0]);
     EXPECT_DOUBLE_EQ(0., values[0][0][1]);
     EXPECT_DOUBLE_EQ(1., values[0][1][0]);
     EXPECT_DOUBLE_EQ(0.5, values[0][1][1]);
     EXPECT_DOUBLE_EQ(0.5, values[1][0][0]);
     EXPECT_DOUBLE_EQ(1., values[1][0][1]);
+    EXPECT_DOUBLE_EQ(0.25, values[1][1][0]);
+    EXPECT_DOUBLE_EQ(0.25, values[1][1][1]);
+}
+
+struct Interval {
+    const vector<double> & first_;
+    const vector<double> & second_;
+    vector<double> change;
+
+    NO_COPY_SHORT(Interval)
+    DEFAULT_MOVE(Interval)
+
+    Interval(const vector<double> & first, const vector<double> & second) : first_(first), second_(second) {
+        for (const size_t val_no : scope(first))
+            change.push_back(second[val_no] - first[val_no]);
+    }
+};
+
+vector<Interval> makeIntervals(const vector<vector<vector<double> > > & values) {
+    vector<Interval> intervals;
+
+    for (const size_t experiment_no : scope(values[0])) {
+        for (const size_t measurement_no : range(values.size() - 1)) {
+            intervals.push_back(Interval(values[measurement_no][experiment_no], values[measurement_no+1][experiment_no]));
+        }
+    }
+
+    return intervals;
+}
+
+TEST_F(DataTest, MakeIntervals) {
+    vector<Interval> intervals = makeIntervals(normalize(data1));
+    EXPECT_DOUBLE_EQ(0.5, intervals[0].change[0]);
+    EXPECT_DOUBLE_EQ(1., intervals[0].change[1]);
+    EXPECT_DOUBLE_EQ(-0.75, intervals[1].change[0]);
+    EXPECT_DOUBLE_EQ(-0.25, intervals[1].change[1]);
 }
 
 int main(int argc, char* argv[]) {
@@ -154,8 +208,10 @@ int main(int argc, char* argv[]) {
     boost::split(column_names, names_line, boost::is_any_of(","));
 
     size_t DA_colum = findDAColumn(column_names);
-    map<size_t, string> components = getComponenets(column_names);
+    vector<ComponentData> components = getComponenets(column_names);
     vector<vector<vector<double> > > timepoints = getTimepoints(components, DA_colum, input_file);
+    timepoints = normalize(timepoints);
+    vector<Interval> intervals = makeIntervals(timepoints);
 
     return 0;
 }
