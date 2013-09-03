@@ -231,11 +231,11 @@ double inline logistic(const double x, const double y, const double z) {
 }
 
 TEST(FunctionTest, logistic) {
-    cout << logistic(0.5) << " " << logistic(0.5, 0.) << " " << logistic(0.5, 0.,0.) << "\n";
-    cout << logistic(0.5) << " " << logistic(0.5, 0.5) << " " << logistic(0.5, 0.5, 0.5) << "\n";
-    cout << logistic(0.5) << " " << logistic(0.5, 1.) << " " << logistic(0.5, 1.,1.) << "\n";
-    cout << logistic(1.) << " " << logistic(1., 1.) << " " << logistic(1., 1.,1.) << "\n";
-    cout << logistic(0.1,0.9) << " " << logistic(0.5,0.5) << "\n";
+    cout << "logistic(0.5) " << logistic(0.5) << ", logistic(0.5, 0.0) " << logistic(0.5, 0.0) << ", logistic(0.5, 0.0, 0.0) " << logistic(0.5, 0.0, 0.0) << "\n";
+    cout << "logistic(0.5) " << logistic(0.5) << ", logistic(0.5, 0.5) " << logistic(0.5, 0.5) << ", logistic(0.5, 0.5, 0.5) " << logistic(0.5, 0.5, 0.5) << "\n";
+    cout << "logistic(0.5) " << logistic(0.5) << ", logistic(0.5, 1.0) " << logistic(0.5, 1.0) << ", logistic(0.5, 1.0, 1.0) " << logistic(0.5, 1.0, 1.0) << "\n";
+    cout << "logistic(1.0) " << logistic(1.0) << ", logistic(1.0, 1.0) " << logistic(1.0, 1.0) << ", logistic(1.0, 1.0, 1.0) " << logistic(1.0, 1.0, 1.0) << "\n";
+    cout << "logistic(0.1,0.9) " << logistic(0.1,0.9) << "logistic(0.5,0.5) "  << logistic(0.5,0.5) << "\n";
 }
 
 vector<ComponentData> computeRegulators(const vector<ComponentData> & components, vector<Interval> & intervals, bool inhibition) {
