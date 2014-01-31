@@ -1,7 +1,10 @@
 /*
- * Copyright (C) 2012-2013 - Adam Streck
- * Independent headers for software development.
- */
+* Copyright (C) 2013-2014 - Adam Streck
+* This file is a part of the ReNeGu (Regulatory Network Guesser)  tool.
+* ReNeGu is a free software: you can redistribute it and/or modify it under the terms of the GNU General Public License version 3.
+* ReNeGu is released without any warranty. See the GNU General Public License for more details. <http://www.gnu.org/licenses/>.
+* For affiliations see <http://www.mi.fu-berlin.de/en/math/groups/dibimath> .
+*/
 #ifndef COMMON_FUNCTIONS_HPP
 #define COMMON_FUNCTIONS_HPP
 

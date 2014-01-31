@@ -1,0 +1,12 @@
+ReNeGu (Regulatory Network Guesser)  tool
+Copyright (C) 2013-2014 - Adam Streck
+GNU General Public License v3
+http://www.mi.fu-berlin.de/en/math/groups/dibimath
+
+Compilation:
+	compile only the main.cpp file
+	Boost headers (v 1.50 or newer) must be in the include path
+	GCC 4.8.x (use -std=c++11) or MVC++ compiler November 2013 
+	
+Execution:
+	Provide a MIDAS file with a .cvs suffix as an argument, a .sif graph will be created in the same folder.
