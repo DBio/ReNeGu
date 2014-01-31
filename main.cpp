@@ -1,16 +1,8 @@
-#include <iostream>
-#include <fstream>
-#include <stdexcept>
-#include <regex>
-#include <map>
-#include <cmath>
-
-#include <gtest/gtest.h>
-
-#include <PunyHeaders/common_functions.hpp>
+#include "common_functions.hpp"
 
 using namespace std;
 
+// @return	the index the column that holds times
 size_t findDAColumn(const vector<string> & column_names) {
     const regex DA_column("DA:.*");
     size_t column_no = 0;
@@ -24,6 +16,7 @@ size_t findDAColumn(const vector<string> & column_names) {
     throw runtime_error("DA_column not found.\n");
 }
 
+// @return	a name of a component from a column name
 string obtainName(const string & column_name) {
     if (regex_match(column_name, regex("DV:.*")))
         return column_name.substr(3, column_name.size() - 3);
@@ -36,43 +29,27 @@ string obtainName(const string & column_name) {
     return "";
 }
 
+// @return	true iff the column holds a component
 bool isComponent(const string & column_name) {
     return !obtainName(column_name).empty();
 }
 
+// @return	true if the component is included in some measurement
 bool isMeasured(const string & column_name) {
     const regex component_expr("DV:.*");
     return regex_match(column_name, component_expr);
 }
 
-TEST(FunctionTest, NameForming) {
-    EXPECT_TRUE(isComponent("DV:Test"));
-    EXPECT_TRUE(isComponent("TR:Testa"));
-    EXPECT_TRUE(isComponent("TR:Testi"));
-    EXPECT_TRUE(isComponent("TR:Test:Inhibitors"));
-    EXPECT_TRUE(isComponent("TR:Test:Stimuli"));
-    EXPECT_FALSE(isComponent("VD:Test"));
-    EXPECT_FALSE(isComponent("TR:TestA"));
-
-    EXPECT_TRUE(isMeasured("DV:Test"));
-    EXPECT_FALSE(isMeasured("VD:Test"));
-    EXPECT_FALSE(isMeasured("TR:Testi"));
-
-    EXPECT_STREQ("Test", obtainName("DV:Test").c_str());
-    EXPECT_STREQ("Test", obtainName("TR:Testa").c_str());
-    EXPECT_STREQ("Test", obtainName("TR:Testi").c_str());
-    EXPECT_STREQ("Test", obtainName("TR:Test:Inhibitors").c_str());
-    EXPECT_STREQ("Test", obtainName("TR:Test:Stimuli").c_str());
-}
-
+// A structure that holds results for a component
 struct ComponentData {
-    size_t column_no;
-    string name;
+    size_t column_no; ///< Index of the column holding its values.
+    string name; ///< Name of the component.
     bool measured; ///< True iff the component is not either stimulated or inhibited.
     set<string> inhibitors; ///< Names of the species that inhibit this node.
     set<string> activators; ///< Names of the species that activate this node.
 };
 
+// @return	a vector of components holding the data relevant to the MIDAS file
 vector<ComponentData> getComponenets(const vector<string> & column_names) {
     vector<ComponentData>  components;
     size_t column_no = 0;
@@ -85,6 +62,7 @@ vector<ComponentData> getComponenets(const vector<string> & column_names) {
     return components;
 }
 
+// @return	a 2D vector (first columns then row) containing the data from the MIDAS file
 vector<vector<string> > getData(fstream & input_file) {
     vector<vector<string > > data;
 
@@ -98,10 +76,17 @@ vector<vector<string> > getData(fstream & input_file) {
     return data;
 }
 
-inline size_t getTime(const vector<string> & line, const size_t DA_column) {
-    return boost::lexical_cast<size_t>(line[DA_column]);
+// @return	the time value (expecte to be integer) in the given row
+inline size_t getTime(const vector<string> & row, const size_t DA_column) {
+	try {
+		return boost::lexical_cast<size_t>(row[DA_column]);
+	}
+	catch (...) {
+		throw invalid_argument("Non-integral time in the input file.");
+	}
 }
 
+// @return	a set of all the timepoints
 set<size_t> getTimes(const vector<vector<string> > & data, const size_t DA_column) {
     set<size_t> times;
 
@@ -112,23 +97,26 @@ set<size_t> getTimes(const vector<vector<string> > & data, const size_t DA_colum
     return times;
 }
 
-inline bool isInTime(const vector<string> line, const size_t DA_column, const size_t time) {
-    return (getTime(line, DA_column) == time);
+// @return	true iff the given row occurs in the requested timepoint
+inline bool isInTime(const vector<string> row, const size_t DA_column, const size_t time) {
+	return (getTime(row, DA_column) == time);
 }
 
+// @return	true iff the source and targe match in the experiment setup (inhibitions and activations)
 bool matchesSetting(const vector<ComponentData> & components, const vector<string> & source, const vector<string> target) {
-    for (const size_t comp_no : scope(components)) {
+    for (const size_t comp_no : cscope(components)) {
         if (components[comp_no].measured)
             continue;
 
         if (source[comp_no].compare(source[comp_no]) != 0)
             return false;
     }
-
     return true;
 }
 
-vector<pair<vector<string>, vector<string> > > getTimesteps(const vector<ComponentData> & components, const size_t DA_column, const vector<vector<string> > & data) {
+// @return	pairs of rows that represent consecutive measurement
+vector<pair<vector<string>, vector<string> > > 
+getTimesteps(const vector<ComponentData> & components, const size_t DA_column, const vector<vector<string> > & data) {
     vector<pair<vector<string>, vector<string> > > timesteps; // Measurements are grouped by a timepoint, not by the experiment!
 
     const set<size_t> times = getTimes(data, DA_column);
@@ -139,6 +127,7 @@ vector<pair<vector<string>, vector<string> > > getTimesteps(const vector<Compone
         if(++time_it == times.end())
             continue;
 
+		// Get the successor for the current line and push the two in the vector if there is such
         for (const vector<string> & target_line : data) {
             if (!isInTime(target_line, DA_column, *time_it))
                 continue;
@@ -153,8 +142,9 @@ vector<pair<vector<string>, vector<string> > > getTimesteps(const vector<Compone
     return timesteps;
 }
 
-
-vector<pair<vector<double>, vector<double> > > convert(const vector<ComponentData> & components, const vector<pair<vector<string>, vector<string> > > & timesteps) {
+// @return	vector of timesteps that no longer hold timing information
+vector<pair<vector<double>, vector<double> > > 
+convert(const vector<ComponentData> & components, const vector<pair<vector<string>, vector<string> > > & timesteps) {
     vector<pair<vector<double>, vector<double> > > converted;
 
     for (const pair<vector<string>, vector<string> >  & timestep : timesteps) {
@@ -170,29 +160,34 @@ vector<pair<vector<double>, vector<double> > > convert(const vector<ComponentDat
     return converted;
 }
 
+// @return	vector of timesteps that has been normalised
+// normalisation means that all the ranges were narrowed to [0,1] and the values has been adjusted accordingly
 vector<pair<vector<double>, vector<double> > > normalize(const vector<pair<vector<double>, vector<double> > > & timesteps) {
     vector<pair<vector<double>, vector<double> > > normalized;
 
     if (timesteps.empty())
         throw runtime_error("Nothing to normalize.");
     const size_t comp_count = timesteps.front().first.size();
+
+	// Compute boundaries
     vector<double> minimals(comp_count, numeric_limits<double>::max());
     vector<double> maximals(comp_count, 0.0);
     for (const pair<vector<double>, vector<double> >  & timestep : timesteps) {
-        for (const size_t comp_no : range(comp_count)) {
+        for (const size_t comp_no : crange(comp_count)) {
             minimals[comp_no] = min(minimals[comp_no], min(timestep.first[comp_no], timestep.second[comp_no]));
             maximals[comp_no] = max(maximals[comp_no], max(timestep.first[comp_no], timestep.second[comp_no]));
         }
     }
 
+	// Compute differences between boundaries
     vector<double> difference;
-    for (const size_t comp_no : range(comp_count)) {
+    for (const size_t comp_no : crange(comp_count)) {
         difference.push_back(maximals[comp_no] - minimals[comp_no]);
     }
 
     for (const pair<vector<double>, vector<double> >  & timestep : timesteps) {
         vector<double> first, second;
-        for (const size_t comp_no : range(comp_count)) {
+        for (const size_t comp_no : crange(comp_count)) {
             first.push_back((timestep.first[comp_no] - minimals[comp_no]) / difference[comp_no]);
             second.push_back((timestep.second[comp_no] - minimals[comp_no]) / difference[comp_no]);
         }
@@ -201,27 +196,6 @@ vector<pair<vector<double>, vector<double> > > normalize(const vector<pair<vecto
 
     return normalized;
 }
-
-class DataTest : public ::testing::Test {
-protected:
-    vector<pair<vector<double>, vector<double> > > data1;
-
-    void SetUp() override {
-        data1 = {{{0,0.4},{0.5,0.8}},{{1,0.6}, {0.25,0.5}}};
-    }
-};
-
-//TEST_F(DataTest, Normalize) {
-//    vector<vector<vector<double> > > values = normalize(data1);
-//    EXPECT_DOUBLE_EQ(0., values[0][0][0]);
-//    EXPECT_DOUBLE_EQ(0., values[0][0][1]);
-//    EXPECT_DOUBLE_EQ(1., values[0][1][0]);
-//    EXPECT_DOUBLE_EQ(0.5, values[0][1][1]);
-//    EXPECT_DOUBLE_EQ(0.5, values[1][0][0]);
-//    EXPECT_DOUBLE_EQ(1., values[1][0][1]);
-//    EXPECT_DOUBLE_EQ(0.25, values[1][1][0]);
-//    EXPECT_DOUBLE_EQ(0.25, values[1][1][1]);
-//}
 
 struct Interval {
     const vector<double> first_;
@@ -237,7 +211,7 @@ struct Interval {
         size_t production_cases = 0;
 
         // Compute change
-        for (const size_t val_no : scope(first)) {
+        for (const size_t val_no : cscope(first)) {
             const double change = second[val_no] - first[val_no];
             changes_.push_back(change);
             if ((change) > 0.) {
@@ -257,6 +231,7 @@ struct Interval {
     }
 };
 
+// Compute time intervals between measurements
 vector<Interval> makeIntervals(const vector<pair<vector<double>, vector<double> > > & timesteps) {
     vector<Interval> intervals;
 
@@ -267,87 +242,70 @@ vector<Interval> makeIntervals(const vector<pair<vector<double>, vector<double> 
     return intervals;
 }
 
-TEST_F(DataTest, MakeIntervals) {
-    vector<Interval> intervals = makeIntervals(normalize(data1));
-    EXPECT_DOUBLE_EQ(0.5, intervals[0].changes_[0]);
-    EXPECT_DOUBLE_EQ(1., intervals[0].changes_[1]);
-    EXPECT_DOUBLE_EQ(-0.75, intervals[1].changes_[0]);
-    EXPECT_DOUBLE_EQ(-0.25, intervals[1].changes_[1]);
-}
-
+// Standard logistic curve (expects x to be in [0,1])
 double inline logistic(const double x) {
     return 1 / (1 + exp(-(x*12-6)));
 }
 
+// Average of x and y weighted by the diversity between the two
 double inline logistic(const double x, const double y) {
-    return logistic((x+y)/2);
+    return logistic((max(x,y) + x*y)/2);
 }
 
+// Average of x, y,z  weighted by the diversity between the three
 double inline logistic(const double x, const double y, const double z) {
-    return logistic((x+y+z)/3);
+    return logistic((max(x,max(z,y)) + x*y + x*z + y*z - y*x*z)/3);
 }
 
-TEST(FunctionTest, logistic) {
-    cout << "logistic(0.5) " << logistic(0.5) << ", logistic(0.5, 0.0) " << logistic(0.5, 0.0) << ", logistic(0.5, 0.0, 0.0) " << logistic(0.5, 0.0, 0.0) << ".\n";
-    cout << "logistic(0.5) " << logistic(0.5) << ", logistic(0.5, 0.5) " << logistic(0.5, 0.5) << ", logistic(0.5, 0.5, 0.5) " << logistic(0.5, 0.5, 0.5) << ".\n";
-    cout << "logistic(0.5) " << logistic(0.5) << ", logistic(0.5, 1.0) " << logistic(0.5, 1.0) << ", logistic(0.5, 1.0, 1.0) " << logistic(0.5, 1.0, 1.0) << ".\n";
-    cout << "logistic(1.0) " << logistic(1.0) << ", logistic(1.0, 1.0) " << logistic(1.0, 1.0) << ", logistic(1.0, 1.0, 1.0) " << logistic(1.0, 1.0, 1.0) << ".\n";
-    cout << "logistic(0.1,0.9) " << logistic(0.1,0.9) << "logistic(0.5,0.5) "  << logistic(0.5,0.5) << ".\n";
-}
-
+// Compute regulators (positive or negative) of all the components
 vector<ComponentData> computeRegulators(const vector<ComponentData> & components, vector<Interval> & intervals, bool inhibition) {
     vector<ComponentData> regulated = components;
-    const size_t total = pow(components.size(), 3) * count_if(components.begin(), components.end(), [](const ComponentData & comp){return comp.measured;}) * 2;
+
+	// Counting values for output
+    const size_t regulated_count = count_if(components.begin(), components.end(), [](const ComponentData & comp){return comp.measured;}) ;
+    // The second part is choose three from components.size() with repetitions
+    const size_t total = regulated_count * ((components.size() * (components.size() + 1) * (components.size() + 2)) / 3);
     size_t current = inhibition ? 0 : total / 2;
 
-    for (const size_t target_no : scope(components)) {
+	// Compute for all the components
+    for (const size_t target_no : cscope(components)) {
         map<set<string>,  double> mutual_inf;
         if (!components[target_no].measured)
             continue;
 
         // Test all combinations up to three regulators (combination of multiple selfs == just single one).
-        for (const size_t source_1_no : scope(components)) {
-            for (const size_t source_2_no : scope(components)) {
-                for (const size_t source_3_no : scope(components)) {
-                     cout << "Testing: " << current++ << "/" << total << "     \r";
+        for (const size_t source_1_no : cscope(components)) {
+            for (const size_t source_2_no : crange(source_1_no, components.size())) {
+                for (const size_t source_3_no : crange(source_2_no, components.size())) {
+                    cout << "Testing: " << current++ << "/" << total << "     \r";
                     double effect = 0.;
                     for (const Interval & interval : intervals) {
                         double factor = inhibition ? -1 * interval.changes_[target_no] : interval.productions_[target_no];
                         effect += factor * logistic(interval.first_[source_1_no],interval.first_[source_2_no],interval.first_[source_3_no]);
                     }
-                    mutual_inf.insert(make_pair(set<string>({components[source_1_no].name, components[source_2_no].name, components[source_3_no].name}), effect));
+                    mutual_inf.insert(
+						make_pair(set<string>({components[source_1_no].name, components[source_2_no].name, components[source_3_no].name}), effect));
                 }
             }
         }
 
-        auto max_it = max_element(mutual_inf.begin(), mutual_inf.end(),
-                                  [](const pair<set<string>, double> & A, const pair<set<string>, double> & B){
+        auto max_it = max_element(mutual_inf.begin(), mutual_inf.end(), [](const pair<set<string>, double> & A, const pair<set<string>, double> & B){
             return A.second < B.second;
         });
-        // Pick the one with the biggest positive influence - if there is none, just take empty.
 
+        // Pick the set of regulstors with the biggest positive influence - if there is none, just take empty.
         set<string> & sources = inhibition ? regulated[target_no].inhibitors : regulated[target_no].activators;
-        sources = (max_it->second - 0.05 * max_it->first.size()) > 0 ? max_it->first : set<string>();
+        const double PENALTY = -0.00;
+        sources = (max_it->second  + PENALTY * max_it->first.size()) > 3*PENALTY ? max_it->first : set<string>();
     }
 
     return regulated;
 }
 
-string getModelName(const string & argument) {
-    string name;
-    for (const char ch : argument) {
-        if (ch == '.')
-            break;
-        name.push_back(ch);
-        if (ch == '/' || ch == '\\')
-            name.clear();
-    }
-    return name;
-}
-
 
 void output(const vector<ComponentData> & components, const string & file_name) {
-    ofstream fout(file_name + ".sif", ios::out);
+	string new_filename = file_name.substr(0, file_name.length() - 3) + "sif";
+	ofstream fout(new_filename, ios::out);
 
     for (const ComponentData & component: components) {
         for (const string & source : component.activators) {
@@ -359,23 +317,22 @@ void output(const vector<ComponentData> & components, const string & file_name) 
     }
 }
 
+// The main function expects a csv file in the MIDAS format
+// The function outpus a .sif graph file in the same folder and with the same name
 int main(int argc, char* argv[]) {
-    if (argc < 2) {
-        ::testing::InitGoogleTest( &argc, argv );
-        return RUN_ALL_TESTS();
-    }
-
+	// Get input file
     string filename(argv[1]);
     fstream input_file(filename, ios::in);
     if (!input_file)
         throw invalid_argument("Wrong filename \"" + filename + "\".\n");
 
+	// Read column names
     string names_line;
     getline(input_file, names_line);
-
     vector<string> column_names;
     boost::split(column_names, names_line, boost::is_any_of(","));
 
+	// Obtain data and normalize them
     size_t DA_colum = findDAColumn(column_names);
     vector<ComponentData> components = getComponenets(column_names);
     vector<vector<string> > data = getData(input_file);
@@ -383,10 +340,13 @@ int main(int argc, char* argv[]) {
     vector<pair<vector<double>, vector<double> > > converted = convert(components, timepoints);
     vector<pair<vector<double>, vector<double> > > normalized = normalize(converted);
     vector<Interval> intervals = makeIntervals(normalized);
+
+	// Add positive and negative regulators
     components = computeRegulators(components, intervals, true);
     components = computeRegulators(components, intervals, false);
-
-    output(components, getModelName(filename));
+	
+	// Output
+	output(components, filename);
 
     return 0;
 }
